@@ -27,81 +27,33 @@ jobs:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
         OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
-        TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
         STOCK_LIST: ${{ secrets.STOCK_LIST }}
-        # 数据源优先级：新浪财经优先，Tushare最后
-        REALTIME_SOURCE_PRIORITY: "tencent,akshare_sina,efinance,akshare_em,tushare"
+        REALTIME_SOURCE_PRIORITY: "tencent,akshare_sina,efinance,akshare_em"
         ENABLE_REALTIME_QUOTE: "true"
       run: |
-        # 检查是否强制运行
         if [ "${{ github.event.inputs.force_run }}" = "true" ]; then
           echo "强制执行模式..."
-          python main.py --force-run
+          python main.py --force-run 2>&1 | tee analysis.log || true
         else
-          python main.py
+          python main.py 2>&1 | tee analysis.log || true
         fi
+        
+        # 查找并显示报告文件
+        echo "=== 查找报告文件 ==="
+        find . -name "report_*.md" -type f 2>/dev/null | head -5
+        ls -la report_*.md 2>/dev/null || echo "未找到报告文件"
+        
+        # 查找日志文件
+        echo "=== 查找日志文件 ==="
+        find logs/ -name "*.log" -type f 2>/dev/null | head -5 || echo "无日志目录"
     
-    - name: Send report to Feishu
-      if: always()
-      env:
-        FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
-        FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-        FEISHU_USER_ID: ${{ secrets.FEISHU_USER_ID }}
-      run: |
-        python3 << 'PYTHON_SCRIPT'
-        import os
-        import json
-        import requests
-        import glob
-        
-        app_id = os.getenv('FEISHU_APP_ID')
-        app_secret = os.getenv('FEISHU_APP_SECRET')
-        user_id = os.getenv('FEISHU_USER_ID')
-        
-        if not all([app_id, app_secret, user_id]):
-            print("飞书配置不完整，跳过推送")
-            exit(0)
-        
-        def get_token():
-            url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal/"
-            resp = requests.post(url, json={"app_id": app_id, "app_secret": app_secret}, timeout=10)
-            data = resp.json()
-            if data.get('code') == 0:
-                return data['tenant_access_token']
-            print(f"获取token失败: {data}")
-            return None
-        
-        def send_message(token, user_id, text):
-            url = "https://open.feishu.cn/open-apis/im/v1/messages"
-            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-            params = {"receive_id_type": "open_id"}
-            payload = {
-                "receive_id": user_id,
-                "msg_type": "text",
-                "content": json.dumps({"text": text[:4000]})
-            }
-            resp = requests.post(url, headers=headers, params=params, json=payload, timeout=10)
-            print(f"发送结果: {resp.json()}")
-        
-        report_files = glob.glob('report_*.md')
-        if report_files:
-            with open(report_files[0], 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            token = get_token()
-            if token:
-                chunks = [content[i:i+3500] for i in range(0, len(content), 3500)]
-                for i, chunk in enumerate(chunks):
-                    header = f"📊 股票分析报告 ({i+1}/{len(chunks)})\n\n" if len(chunks) > 1 else "📊 股票分析报告\n\n"
-                    send_message(token, user_id, header + chunk)
-        else:
-            print("未找到报告文件")
-        PYTHON_SCRIPT
-    
-    - name: Upload report
+    - name: Upload analysis log
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: stock-report
-        path: report_*.md
-        retention-days: 30
+        name: analysis-logs
+        path: |
+          analysis.log
+          logs/*.log
+          report_*.md
+        retention-days: 7
