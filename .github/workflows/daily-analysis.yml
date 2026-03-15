@@ -29,6 +29,9 @@ jobs:
         OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
         TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
         STOCK_LIST: ${{ secrets.STOCK_LIST }}
+        # 数据源优先级：新浪财经优先，Tushare最后
+        REALTIME_SOURCE_PRIORITY: "tencent,akshare_sina,efinance,akshare_em,tushare"
+        ENABLE_REALTIME_QUOTE: "true"
       run: |
         # 检查是否强制运行
         if [ "${{ github.event.inputs.force_run }}" = "true" ]; then
