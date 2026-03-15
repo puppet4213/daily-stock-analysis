@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       force_run:
-        description: '强制运行'
+        description: '强制运行（跳过交易日检查）'
         required: false
         default: 'false'
 
@@ -30,9 +30,13 @@ jobs:
         TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
         STOCK_LIST: ${{ secrets.STOCK_LIST }}
       run: |
-        python main.py 2>&1 | tee analysis_output.log || true
-        # 查找生成的报告文件
-        ls -la report_*.md 2>/dev/null || echo "未找到报告文件"
+        # 检查是否强制运行
+        if [ "${{ github.event.inputs.force_run }}" = "true" ]; then
+          echo "强制执行模式..."
+          python main.py --force-run
+        else
+          python main.py
+        fi
     
     - name: Send report to Feishu
       if: always()
@@ -55,7 +59,6 @@ jobs:
             print("飞书配置不完整，跳过推送")
             exit(0)
         
-        # 获取 tenant_access_token
         def get_token():
             url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal/"
             resp = requests.post(url, json={"app_id": app_id, "app_secret": app_secret}, timeout=10)
@@ -65,7 +68,6 @@ jobs:
             print(f"获取token失败: {data}")
             return None
         
-        # 发送消息
         def send_message(token, user_id, text):
             url = "https://open.feishu.cn/open-apis/im/v1/messages"
             headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -73,12 +75,11 @@ jobs:
             payload = {
                 "receive_id": user_id,
                 "msg_type": "text",
-                "content": json.dumps({"text": text[:4000]})  # 限制长度
+                "content": json.dumps({"text": text[:4000]})
             }
             resp = requests.post(url, headers=headers, params=params, json=payload, timeout=10)
             print(f"发送结果: {resp.json()}")
         
-        # 读取报告内容
         report_files = glob.glob('report_*.md')
         if report_files:
             with open(report_files[0], 'r', encoding='utf-8') as f:
@@ -86,7 +87,6 @@ jobs:
             
             token = get_token()
             if token:
-                # 分段发送
                 chunks = [content[i:i+3500] for i in range(0, len(content), 3500)]
                 for i, chunk in enumerate(chunks):
                     header = f"📊 股票分析报告 ({i+1}/{len(chunks)})\n\n" if len(chunks) > 1 else "📊 股票分析报告\n\n"
