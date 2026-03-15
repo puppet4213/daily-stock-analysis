@@ -38,14 +38,92 @@ jobs:
           python main.py 2>&1 | tee analysis.log || true
         fi
         
-        # 查找并显示报告文件
+        # 查找报告文件
         echo "=== 查找报告文件 ==="
-        find . -name "report_*.md" -type f 2>/dev/null | head -5
+        find . -name "report_*.md" -type f 2>/dev/null
         ls -la report_*.md 2>/dev/null || echo "未找到报告文件"
+    
+    - name: Send report to Feishu
+      if: always()
+      env:
+        FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+        FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+        FEISHU_USER_ID: ${{ secrets.FEISHU_USER_ID }}
+      run: |
+        python3 << 'PYTHON_SCRIPT'
+        import os
+        import json
+        import requests
+        import glob
         
-        # 查找日志文件
-        echo "=== 查找日志文件 ==="
-        find logs/ -name "*.log" -type f 2>/dev/null | head -5 || echo "无日志目录"
+        app_id = os.getenv('FEISHU_APP_ID')
+        app_secret = os.getenv('FEISHU_APP_SECRET')
+        user_id = os.getenv('FEISHU_USER_ID')
+        
+        if not all([app_id, app_secret, user_id]):
+            print("⚠️ 飞书配置不完整，跳过推送")
+            print(f"APP_ID: {bool(app_id)}, APP_SECRET: {bool(app_secret)}, USER_ID: {bool(user_id)}")
+            exit(0)
+        
+        print(f"🔄 正在连接飞书... APP_ID: {app_id[:8]}...")
+        
+        # 获取 tenant_access_token
+        def get_token():
+            url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal/"
+            resp = requests.post(url, json={"app_id": app_id, "app_secret": app_secret}, timeout=10)
+            data = resp.json()
+            if data.get('code') == 0:
+                return data['tenant_access_token']
+            print(f"❌ 获取token失败: {data}")
+            return None
+        
+        # 发送消息
+        def send_message(token, user_id, text):
+            url = "https://open.feishu.cn/open-apis/im/v1/messages"
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+            params = {"receive_id_type": "open_id"}
+            payload = {
+                "receive_id": user_id,
+                "msg_type": "text",
+                "content": json.dumps({"text": text[:4000]})
+            }
+            resp = requests.post(url, headers=headers, params=params, json=payload, timeout=10)
+            result = resp.json()
+            if result.get('code') == 0:
+                print(f"✅ 消息发送成功")
+            else:
+                print(f"❌ 发送失败: {result}")
+            return result
+        
+        # 查找并发送报告
+        report_files = glob.glob('report_*.md')
+        if report_files:
+            print(f"📄 找到 {len(report_files)} 个报告文件")
+            with open(report_files[0], 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            token = get_token()
+            if token:
+                # 分段发送
+                chunks = [content[i:i+3500] for i in range(0, len(content), 3500)]
+                print(f"📤 正在发送 {len(chunks)} 段消息...")
+                for i, chunk in enumerate(chunks):
+                    header = f"📊 股票分析报告 ({i+1}/{len(chunks)})\n\n" if len(chunks) > 1 else "📊 股票分析报告\n\n"
+                    send_message(token, user_id, header + chunk)
+            else:
+                print("❌ 无法获取飞书 token")
+        else:
+            print("⚠️ 未找到报告文件，尝试发送日志...")
+            # 如果没有报告，发送日志摘要
+            try:
+                with open('analysis.log', 'r', encoding='utf-8') as f:
+                    log_content = f.read()[:3000]
+                token = get_token()
+                if token:
+                    send_message(token, user_id, f"⚠️ 未生成报告文件\n\n日志摘要:\n{log_content}")
+            except Exception as e:
+                print(f"❌ 读取日志失败: {e}")
+        PYTHON_SCRIPT
     
     - name: Upload analysis log
       if: always()
