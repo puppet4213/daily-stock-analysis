@@ -22,12 +22,12 @@ jobs:
     
     - run: pip install -r requirements.txt
     
-    - name: Run analysis with Gemini
+    - name: Run analysis
       env:
-        # Gemini AI 配置
-        OPENAI_API_KEY: AIzaSyBKs65SKHFTbIsHPUQlF0wSI1a5I_RLMLw
-        OPENAI_BASE_URL: https://generativelanguage.googleapis.com/v1beta
-        OPENAI_MODEL: gemini-2.0-flash-exp
+        # AI 配置（从 Secrets 读取）
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+        OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
         # 股票列表
         STOCK_LIST: ${{ secrets.STOCK_LIST }}
         # 数据源配置
@@ -38,9 +38,9 @@ jobs:
         FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
         FEISHU_USER_ID: ${{ secrets.FEISHU_USER_ID }}
       run: |
-        echo "=== Gemini AI 股票分析 ==="
-        echo "模型: gemini-2.0-flash-exp"
-        echo "股票: ${{ secrets.STOCK_LIST }}"
+        echo "=== 股票分析系统启动 ==="
+        echo "AI模型: ${{ secrets.OPENAI_MODEL }}"
+        echo "股票列表: ${{ secrets.STOCK_LIST }}"
         
         if [ "${{ github.event.inputs.force_run }}" = "true" ]; then
           echo "=== 强制执行模式 ==="
@@ -98,7 +98,7 @@ jobs:
                     header = f"📊 股票分析报告 ({i//3500+1}/{(len(content)-1)//3500+1})\n\n"
                     send_message(token, user_id, header + chunk)
         else:
-            print("⚠️ 未找到报告")
+            print("⚠️ 未找到报告文件")
         EOF
     
     - name: Upload logs
