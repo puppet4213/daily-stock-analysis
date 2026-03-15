@@ -22,68 +22,36 @@ jobs:
     
     - run: pip install -r requirements.txt
     
-    - name: Run analysis
+    - name: Run analysis with Gemini
       env:
-        # AI 配置
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
-        OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+        # Gemini AI 配置
+        OPENAI_API_KEY: AIzaSyBKs65SKHFTbIsHPUQlF0wSI1a5I_RLMLw
+        OPENAI_BASE_URL: https://generativelanguage.googleapis.com/v1beta
+        OPENAI_MODEL: gemini-2.0-flash-exp
+        # 股票列表
         STOCK_LIST: ${{ secrets.STOCK_LIST }}
         # 数据源配置
         REALTIME_SOURCE_PRIORITY: "tencent,akshare_sina,efinance,akshare_em"
         ENABLE_REALTIME_QUOTE: "true"
-        # 飞书配置（让 main.py 也能读取）
-        FEISHU_WEBHOOK_URL: "https://open.feishu.cn/open-apis/bot/v2/hook/placeholder"
+        # 飞书配置
         FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
         FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
         FEISHU_USER_ID: ${{ secrets.FEISHU_USER_ID }}
       run: |
-        echo "=== 环境变量检查 ==="
-        echo "STOCK_LIST: $STOCK_LIST"
-        echo "OPENAI_MODEL: $OPENAI_MODEL"
-        echo "FEISHU_APP_ID: ${FEISHU_APP_ID:0:8}..."
+        echo "=== Gemini AI 股票分析 ==="
+        echo "模型: gemini-2.0-flash-exp"
+        echo "股票: ${{ secrets.STOCK_LIST }}"
         
         if [ "${{ github.event.inputs.force_run }}" = "true" ]; then
           echo "=== 强制执行模式 ==="
-          python main.py --force-run
+          python main.py --force-run 2>&1 | tee analysis.log || true
         else
-          python main.py
+          python main.py 2>&1 | tee analysis.log || true
         fi
         
-        echo "=== 检查生成的文件 ==="
-        echo "当前目录:"
-        ls -la
-        echo ""
-        echo "查找报告文件:"
-        find . -name "*.md" -type f 2>/dev/null | head -10
-        echo ""
-        echo "查找日志文件:"
-        find logs/ -name "*.log" 2>/dev/null | head -5 || echo "无日志目录"
-    
-    - name: Generate simple report if missing
-      if: always()
-      run: |
-        # 如果 main.py 没有生成报告，我们手动生成一个
-        if [ ! -f report_*.md ]; then
-          echo "⚠️ 未找到报告文件，生成简化版报告..."
-          cat > report_manual.md << EOF
-# 📊 股票分析报告 - $(date +%Y-%m-%d)
-
-## 分析股票
-${{ secrets.STOCK_LIST }}
-
-## 状态
-- ⏰ 分析时间: $(date)
-- 🔧 运行模式: GitHub Actions
-- ⚠️ 注意: 原分析程序未生成报告，此为简化版
-
-## 请检查
-1. 查看详细日志: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-2. 检查 Kimi API 是否正常
-3. 检查数据源是否可用
-EOF
-          echo "✅ 已生成简化报告"
-        fi
+        echo "=== 检查报告文件 ==="
+        ls -la *.md 2>/dev/null || echo "未找到 .md 文件"
+        find . -name "*.md" -type f 2>/dev/null | head -5
     
     - name: Send report to Feishu
       if: always()
@@ -92,11 +60,8 @@ EOF
         FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
         FEISHU_USER_ID: ${{ secrets.FEISHU_USER_ID }}
       run: |
-        python3 << 'PYTHON_SCRIPT'
-        import os
-        import json
-        import requests
-        import glob
+        python3 << 'EOF'
+        import os, json, requests, glob
         
         app_id = os.getenv('FEISHU_APP_ID')
         app_secret = os.getenv('FEISHU_APP_SECRET')
@@ -110,45 +75,31 @@ EOF
             url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal/"
             resp = requests.post(url, json={"app_id": app_id, "app_secret": app_secret}, timeout=10)
             data = resp.json()
-            if data.get('code') == 0:
-                return data['tenant_access_token']
-            print(f"❌ 获取token失败: {data}")
-            return None
+            return data.get('tenant_access_token') if data.get('code') == 0 else None
         
         def send_message(token, user_id, text):
             url = "https://open.feishu.cn/open-apis/im/v1/messages"
             headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
             params = {"receive_id_type": "open_id"}
-            payload = {
-                "receive_id": user_id,
-                "msg_type": "text",
-                "content": json.dumps({"text": text[:4000]})
-            }
+            payload = {"receive_id": user_id, "msg_type": "text", "content": json.dumps({"text": text[:4000]})}
             resp = requests.post(url, headers=headers, params=params, json=payload, timeout=10)
-            result = resp.json()
-            if result.get('code') == 0:
-                print("✅ 消息发送成功")
-            else:
-                print(f"❌ 发送失败: {result}")
+            return resp.json()
         
-        # 查找报告文件（包括手动生成的）
-        report_files = glob.glob('*.md')
-        report_files = [f for f in report_files if 'report' in f.lower()]
-        
-        if report_files:
-            print(f"📄 找到报告: {report_files}")
-            with open(report_files[0], 'r', encoding='utf-8') as f:
+        # 查找并发送报告
+        reports = [f for f in glob.glob('*.md') if 'report' in f.lower()]
+        if reports:
+            print(f"📄 发送报告: {reports[0]}")
+            with open(reports[0], 'r') as f:
                 content = f.read()
-            
             token = get_token()
             if token:
-                chunks = [content[i:i+3500] for i in range(0, len(content), 3500)]
-                for i, chunk in enumerate(chunks):
-                    header = f"📊 股票分析报告 ({i+1}/{len(chunks)})\n\n" if len(chunks) > 1 else "📊 股票分析报告\n\n"
+                for i in range(0, len(content), 3500):
+                    chunk = content[i:i+3500]
+                    header = f"📊 股票分析报告 ({i//3500+1}/{(len(content)-1)//3500+1})\n\n"
                     send_message(token, user_id, header + chunk)
         else:
-            print("⚠️ 未找到任何报告文件")
-        PYTHON_SCRIPT
+            print("⚠️ 未找到报告")
+        EOF
     
     - name: Upload logs
       if: always()
@@ -158,4 +109,5 @@ EOF
         path: |
           logs/
           *.md
+          analysis.log
         retention-days: 7
